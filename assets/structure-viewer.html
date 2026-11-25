@@ -74,6 +74,23 @@
   let pitch = 0.62;
   let pointer = null;
 
+  const palette = document.createElement('span');
+  palette.hidden = true;
+  const seriesFallbacks = ['#006c9e', '#a84e0b', '#7041a8', '#23734b', '#a63261', '#746200'];
+  const series = seriesFallbacks.map((fallback, i) => colorSample('--viz-series-' + (i + 1), fallback));
+  const foreground = colorSample('--foreground', '#566474');
+  const background = colorSample('--background', '#fff');
+  root.append(palette);
+
+  function colorSample(variable, fallback) {
+    const element = document.createElement('span');
+    element.style.color = 'var(' + variable + ', ' + fallback + ')';
+    palette.append(element);
+    return element;
+  }
+
+
+
   function buildScene(counts, coordination) {
     const points = [];
     const pointIndices = new Map();
@@ -164,12 +181,9 @@
       };
     });
 
-    const theme = getComputedStyle(canvas);
-    const fallbacks = ['#006c9e', '#a84e0b', '#7041a8', '#23734b', '#a63261', '#746200'];
-    const colors = fallbacks.map((fallback, index) =>
-      theme.getPropertyValue('--viz-series-' + (index + 1)).trim() || fallback
-    );
-    const line = theme.getPropertyValue('--foreground').trim() || '#566474';
+    const colors = series.map(sample => getComputedStyle(sample).color);
+    const line = getComputedStyle(foreground).color;
+    const fill = getComputedStyle(background).color;
     function drawSegment(first, second) {
       const start = projected[first];
       const end = projected[second];
@@ -207,7 +221,7 @@
       ctx.beginPath();
       ctx.arc(x, y, radius, 0, 2 * Math.PI);
       ctx.fillStyle = colors[group] ?? colors[2];
-      if (extra) ctx.fillStyle = theme.getPropertyValue('--background').trim() || '#fff';
+      if (extra) ctx.fillStyle = fill;
       ctx.fill();
       if (isReference || isNeighbor) {
         ctx.strokeStyle = extra ? (colors[group] ?? colors[2]) : colors[2];
@@ -268,6 +282,7 @@
     });
   });
   new ResizeObserver(draw).observe(canvas);
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', draw);
   syncScene();
 })();
 </script>
