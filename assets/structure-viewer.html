@@ -1,0 +1,273 @@
+<section id="materials-nacl-viewer" aria-label="염화나트륨의 단위격자">
+  <style>
+    #materials-nacl-viewer { display: grid; gap: calc(var(--font-size-base, 14px) * .5); }
+    #materials-nacl-viewer canvas { display: block; width: 100%; height: clamp(245px, 52vw, 365px); touch-action: none; cursor: grab; }
+    #materials-nacl-viewer canvas:active { cursor: grabbing; }
+    #materials-nacl-viewer .structure-key:not([hidden]) { display: flex; flex-wrap: wrap; gap: .5em 1em; }
+    #materials-nacl-viewer fieldset { display: flex; flex-wrap: wrap; gap: .5em; border: 0; padding: 0; margin: 0; min-width: 0; }
+    #materials-nacl-viewer .repeat-axis { width: 5em; max-width: 100%; }
+    #materials-nacl-viewer [hidden] { display: none; }
+    #materials-nacl-coordination:has([hidden]) { display: none; }
+  </style>
+  <h3>염화나트륨(NaCl)의 단위격자</h3>
+  <canvas aria-label="Na⁺ 양이온과 Cl⁻ 음이온으로 이루어진 이상화된 암염 구조" role="img"></canvas>
+  <div class="structure-key" aria-label="범례">
+    <span><span aria-hidden="true" style="color:var(--viz-series-1, #006c9e)">●</span> Na⁺ 양이온</span>
+    <span><span aria-hidden="true" style="color:var(--viz-series-2, #a84e0b)">●</span> Cl⁻ 음이온</span>
+    <span>얇은 실선은 단위격자 경계</span>
+  </div>
+  <label class="form-check form-switch" data-coordination-control hidden>
+    <input type="checkbox" class="form-check-input" checked aria-controls="materials-nacl-coordination">
+    <span>배위선 표시</span>
+  </label>
+  <div id="materials-nacl-coordination" aria-live="polite">
+    <div class="structure-key" data-coordination-key hidden>
+      <span data-coordination-count></span>
+      <span>◎ 기준 Na⁺</span>
+      <span>굵은 실선의 끝은 최근접 Cl⁻</span>
+    </div>
+  </div>
+  <fieldset class="viz-controls" data-repeat-controls>
+    <legend>단위격자 개수</legend>
+    <label class="form-label repeat-axis">X축 <input type="number" class="form-control" data-repeat min="1" max="8" step="1" value="1"></label>
+    <label class="form-label repeat-axis">Y축 <input type="number" class="form-control" data-repeat min="1" max="8" step="1" value="1"></label>
+    <label class="form-label repeat-axis">Z축 <input type="number" class="form-control" data-repeat min="1" max="8" step="1" value="1"></label>
+  </fieldset>
+  <div class="viz-row" role="group" aria-label="3D 구조 회전">
+    <button type="button" class="btn" data-yaw="-1">왼쪽 회전</button>
+    <button type="button" class="btn" data-yaw="1">오른쪽 회전</button>
+    <button type="button" class="btn" data-pitch="-1">위로 회전</button>
+    <button type="button" class="btn" data-pitch="1">아래로 회전</button>
+  </div>
+</section>
+<script>
+(() => {
+  const root = document.getElementById('materials-nacl-viewer');
+  const canvas = root.querySelector('canvas');
+  const ctx = canvas.getContext('2d');
+  const model = {
+    vertices: [
+      [-1,-1,-1], [1,-1,-1], [-1,1,-1], [1,1,-1],
+      [-1,-1,1], [1,-1,1], [-1,1,1], [1,1,1],
+      [-1,0,0], [1,0,0], [0,-1,0], [0,1,0], [0,0,-1], [0,0,1],
+      [0,-1,-1], [-1,0,-1], [-1,-1,0], [1,0,-1], [1,-1,0], [0,1,-1],
+      [-1,1,0], [1,1,0], [0,-1,1], [-1,0,1], [1,0,1], [0,1,1], [0,0,0]
+    ],
+    edges: [[0,1],[0,2],[0,4],[1,3],[1,5],[2,3],[2,6],[3,7],[4,5],[4,6],[5,7],[6,7]],
+    atoms: [
+      [0,1],[1,1],[2,1],[3,1],[4,1],[5,1],[6,1],[7,1],[8,1],[9,1],[10,1],[11,1],[12,1],[13,1],
+      [14,0],[15,0],[16,0],[17,0],[18,0],[19,0],[20,0],[21,0],[22,0],[23,0],[24,0],[25,0],[26,0]
+    ],
+    cellVectors: [[2,0,0],[0,2,0],[0,0,2]],
+    coordination: { reference: 26, neighbors: [8,9,10,11,12,13] }
+  };
+
+  const coordinationControl = root.querySelector('[data-coordination-control]');
+  const coordinationToggle = coordinationControl.querySelector('input');
+  const coordinationKey = root.querySelector('[data-coordination-key]');
+  const coordinationCount = root.querySelector('[data-coordination-count]');
+  const repeats = [...root.querySelectorAll('[data-repeat]')];
+  root.querySelector('[data-repeat-controls]').hidden = !model.cellVectors;
+  coordinationControl.hidden = !model.coordination;
+  let scene;
+  let yaw = 0.78;
+  let pitch = 0.62;
+  let pointer = null;
+
+  function buildScene(counts, coordination) {
+    const points = [];
+    const pointIndices = new Map();
+    const edges = new Map();
+    const atoms = new Map();
+    function pointIndex(point, offset) {
+      const position = point.map((value, axis) => value + offset[axis]);
+      const key = position.map(value => Math.round(value * 1e8)).join(',');
+      if (!pointIndices.has(key)) {
+        pointIndices.set(key, points.length);
+        points.push(position);
+      }
+      return pointIndices.get(key);
+    }
+
+    function offsetFor(cell) {
+      return [0, 1, 2].map(axis =>
+        model.cellVectors?.reduce((sum, vector, index) => sum + vector[axis] * cell[index], 0) ?? 0
+      );
+    }
+
+    for (let x = 0; x < counts[0]; x++) {
+      for (let y = 0; y < counts[1]; y++) {
+        for (let z = 0; z < counts[2]; z++) {
+          const offset = offsetFor([x, y, z]);
+          const ids = model.vertices.map(point => pointIndex(point, offset));
+          for (const [first, second] of model.edges) {
+            const a = Math.min(ids[first], ids[second]);
+            const b = Math.max(ids[first], ids[second]);
+            edges.set(a + ',' + b, [a, b]);
+          }
+          for (const [index, group] of model.atoms) atoms.set(ids[index], { index: ids[index], group });
+        }
+      }
+    }
+
+    let reference;
+    const neighbors = new Set();
+    const extraVertices = coordination?.extraVertices ?? [];
+    if (coordination) {
+      const centralCell = counts.map(count => Math.floor((count - 1) / 2));
+      const offset = offsetFor(centralCell);
+      const localPoints = [...model.vertices, ...extraVertices];
+      reference = pointIndex(localPoints[coordination.reference], offset);
+      for (const neighbor of coordination.neighbors) {
+        const index = pointIndex(localPoints[neighbor], offset);
+        neighbors.add(index);
+        if (!atoms.has(index)) {
+          const group = coordination.extraGroups?.[neighbor - model.vertices.length];
+          atoms.set(index, { index, group, extra: true });
+        }
+      }
+    }
+
+    const limits = [0, 1, 2].map(axis => points.reduce(
+      ([min, max], point) => [Math.min(min, point[axis]), Math.max(max, point[axis])],
+      [Infinity, -Infinity]
+    ));
+    const center = limits.map(([min, max]) => (min + max) / 2);
+    const vertices = points.map(point => point.map((value, axis) => value - center[axis]));
+    const extent = vertices.reduce((max, vertex) => Math.max(max, Math.hypot(...vertex)), 0.01);
+    return { vertices, extent, edges: [...edges.values()], atoms: [...atoms.values()], reference, neighbors };
+  }
+
+
+  function draw() {
+    const { width, height } = canvas.getBoundingClientRect();
+    if (!width || !height) return;
+    const ratio = window.devicePixelRatio || 1;
+    canvas.width = Math.round(width * ratio);
+    canvas.height = Math.round(height * ratio);
+    ctx.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
+
+    const { vertices, extent, edges, atoms, reference, neighbors } = scene;
+    const showCoordination = reference !== undefined;
+    const half = Math.min(width, height) / 2;
+    const scale = Math.max(0, half - 28) / extent;
+    const radius = Math.min(12, half * 0.09, scale * 0.21);
+    const sinY = Math.sin(yaw), cosY = Math.cos(yaw);
+    const sinX = Math.sin(pitch), cosX = Math.cos(pitch);
+    const projected = vertices.map(([x, y, z]) => {
+      const horizontal = x * cosY + z * sinY;
+      const depth = z * cosY - x * sinY;
+      return {
+        x: width / 2 + horizontal * scale,
+        y: height / 2 - (y * cosX - depth * sinX) * scale,
+        z: y * sinX + depth * cosX
+      };
+    });
+
+    const theme = getComputedStyle(canvas);
+    const fallbacks = ['#006c9e', '#a84e0b', '#7041a8', '#23734b', '#a63261', '#746200'];
+    const colors = fallbacks.map((fallback, index) =>
+      theme.getPropertyValue('--viz-series-' + (index + 1)).trim() || fallback
+    );
+    const line = theme.getPropertyValue('--foreground').trim() || '#566474';
+    function drawSegment(first, second) {
+      const start = projected[first];
+      const end = projected[second];
+      ctx.moveTo(start.x, start.y);
+      ctx.lineTo(end.x, end.y);
+    }
+
+    ctx.globalAlpha = showCoordination ? 0.34 : 0.72;
+    ctx.strokeStyle = line;
+    ctx.lineWidth = Math.min(1.5, Math.max(0.65, radius * 0.15));
+    ctx.beginPath();
+    for (const [a, b] of edges) drawSegment(a, b);
+    ctx.stroke();
+
+    if (showCoordination) {
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = colors[2];
+      ctx.lineWidth = Math.min(2.75, Math.max(1, radius * 0.34));
+      ctx.beginPath();
+      for (const neighbor of neighbors) drawSegment(reference, neighbor);
+      ctx.stroke();
+    }
+
+    function emphasis(index) {
+      return Number(index === reference || neighbors.has(index));
+    }
+    const orderedAtoms = [...atoms].sort((first, second) =>
+      emphasis(first.index) - emphasis(second.index) || projected[first.index].z - projected[second.index].z
+    );
+    for (const { index, group, extra } of orderedAtoms) {
+      const { x, y } = projected[index];
+      const isReference = index === reference;
+      const isNeighbor = neighbors.has(index);
+      ctx.globalAlpha = !showCoordination || isReference || isNeighbor ? 1 : 0.24;
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, 2 * Math.PI);
+      ctx.fillStyle = colors[group] ?? colors[2];
+      if (extra) ctx.fillStyle = theme.getPropertyValue('--background').trim() || '#fff';
+      ctx.fill();
+      if (isReference || isNeighbor) {
+        ctx.strokeStyle = extra ? (colors[group] ?? colors[2]) : colors[2];
+        ctx.lineWidth = Math.min(2, Math.max(0.8, radius * 0.23));
+        ctx.stroke();
+      }
+      if (isReference) {
+        ctx.beginPath();
+        ctx.arc(x, y, radius + Math.min(4, radius * .65), 0, 2 * Math.PI);
+        ctx.stroke();
+      }
+    }
+  }
+
+  function rotate(horizontal, vertical) {
+    yaw += horizontal;
+    pitch += vertical;
+    draw();
+  }
+
+  canvas.addEventListener('pointerdown', event => {
+    if (event.button !== 0 || pointer) return;
+    canvas.setPointerCapture(event.pointerId);
+    pointer = { id: event.pointerId, x: event.clientX, y: event.clientY };
+  });
+  canvas.addEventListener('pointermove', event => {
+    if (event.pointerId !== pointer?.id) return;
+    rotate((event.clientX - pointer.x) * 0.012, (event.clientY - pointer.y) * 0.012);
+    pointer.x = event.clientX;
+    pointer.y = event.clientY;
+  });
+  canvas.addEventListener('lostpointercapture', event => {
+    if (event.pointerId === pointer?.id) pointer = null;
+  });
+  function syncScene() {
+    const counts = repeats.map(input => {
+      const value = Number.isFinite(input.valueAsNumber) ? Math.trunc(input.valueAsNumber) : 1;
+      const count = model.cellVectors ? Math.min(Number(input.max), Math.max(1, value)) : 1;
+      input.value = count;
+      return count;
+    });
+    const coordination = coordinationToggle.checked ? model.coordination : null;
+    scene = buildScene(counts, coordination);
+    coordinationCount.textContent = coordination ? '배위수 ' + scene.neighbors.size : '';
+    coordinationKey.hidden = !coordination;
+    const shownAtoms = scene.atoms.length;
+    canvas.setAttribute('aria-description', shownAtoms + '개 입자 위치. ' + coordinationCount.textContent);
+    draw();
+  }
+
+  coordinationToggle.addEventListener('change', syncScene);
+  for (const input of repeats) input.addEventListener('change', syncScene);
+
+  root.querySelectorAll('button').forEach(button => {
+    button.addEventListener('click', () => {
+      rotate(Number(button.dataset.yaw || 0) * Math.PI / 6,
+             Number(button.dataset.pitch || 0) * Math.PI / 6);
+    });
+  });
+  new ResizeObserver(draw).observe(canvas);
+  syncScene();
+})();
+</script>
